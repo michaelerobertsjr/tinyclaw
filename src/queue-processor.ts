@@ -46,6 +46,8 @@ import {
 
 // Process a single message from the DB
 async function processMessage(dbMsg: DbMessage): Promise<void> {
+    let resolvedAgentId = dbMsg.agent ?? 'default';
+
     try {
         const channel = dbMsg.channel;
         const sender = dbMsg.sender;
@@ -109,6 +111,7 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             agentId = Object.keys(agents)[0];
         }
 
+        resolvedAgentId = agentId;
         const agent = agents[agentId];
         log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
         if (!isInternal) {
@@ -298,7 +301,7 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             const eventData = {
                 id: dbMsg.id,
                 messageId: dbMsg.message_id,
-                agent: dbMsg.agent ?? 'default',
+                agent: resolvedAgentId,
                 channel: dbMsg.channel,
                 sender: dbMsg.sender,
                 retryCount: failResult.retryCount,
@@ -313,13 +316,13 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
                 const conv = conversations.get(dbMsg.conversation_id);
                 if (conv) {
                     await withConversationLock(conv.id, async () => {
-                        conv.pendingAgents.delete(dbMsg.agent ?? 'default');
+                        conv.pendingAgents.delete(resolvedAgentId);
                         const shouldComplete = decrementPending(conv);
 
                         if (shouldComplete) {
                             completeConversation(conv);
                         } else {
-                            log('INFO', `Conversation ${conv.id}: ${conv.pending} branch(es) still pending after dead branch @${dbMsg.agent ?? 'default'}`);
+                            log('INFO', `Conversation ${conv.id}: ${conv.pending} branch(es) still pending after dead branch @${resolvedAgentId}`);
                         }
                     });
                 }

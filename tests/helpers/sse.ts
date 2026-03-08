@@ -55,23 +55,29 @@ export async function connectSse(baseUrl: string): Promise<SseConnection> {
     const events: SseEvent[] = [];
     const reader = response.body.getReader();
     let buffer = '';
+    let streamError: Error | null = null;
 
     const streamPromise = (async () => {
         while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                break;
-            }
-
-            buffer += Buffer.from(value).toString('utf8');
-            const frames = buffer.split('\n\n');
-            buffer = frames.pop() || '';
-
-            for (const frame of frames) {
-                const parsed = parseFrame(frame.trim());
-                if (parsed) {
-                    events.push(parsed);
+            try {
+                const { done, value } = await reader.read();
+                if (done) {
+                    break;
                 }
+
+                buffer += Buffer.from(value).toString('utf8');
+                const frames = buffer.split('\n\n');
+                buffer = frames.pop() || '';
+
+                for (const frame of frames) {
+                    const parsed = parseFrame(frame.trim());
+                    if (parsed) {
+                        events.push(parsed);
+                    }
+                }
+            } catch (error) {
+                streamError = error as Error;
+                throw error;
             }
         }
     })();
@@ -80,6 +86,9 @@ export async function connectSse(baseUrl: string): Promise<SseConnection> {
         events,
         async waitForOrderedEvents(expectedEvents: string[], timeoutMs = 10_000) {
             return await waitFor(() => {
+                if (streamError) {
+                    throw streamError;
+                }
                 let nextIndex = 0;
                 for (const event of events) {
                     if (event.event === expectedEvents[nextIndex]) {
@@ -96,8 +105,11 @@ export async function connectSse(baseUrl: string): Promise<SseConnection> {
             controller.abort();
             try {
                 await streamPromise;
-            } catch {
-                // AbortError from closing the stream is expected.
+            } catch (error) {
+                const streamException = streamError || (error as Error);
+                if (streamException.name !== 'AbortError') {
+                    throw streamException;
+                }
             }
         },
     };
